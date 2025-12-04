@@ -159,3 +159,75 @@ def plot_roc_curve(y_true, y_score, title='Curva ROC'):
     plt.legend()
     plt.grid(True)
     plt.show()
+
+def create_advanced_features(df):
+    """
+    Cria features avançadas de crédito, incluindo razões financeiras,
+    volatilidade e histórico de inadimplência agregado por safra
+    (evitando data leakage intra-mês).
+
+    Args:
+        df (pd.DataFrame): DataFrame contendo as colunas originais.
+
+    Returns:
+        pd.DataFrame: DataFrame enriquecido com novas features.
+    """
+    # Trabalha em uma cópia para não alterar o original inadvertidamente
+    df_feat = df.copy()
+
+    # Garante a ordenação correta para cálculos de janela (rolling/shift)
+    if 'ID_CLIENTE' in df_feat.columns and 'SAFRA_REF' in df_feat.columns:
+        df_feat = df_feat.sort_values(['ID_CLIENTE', 'SAFRA_REF'])
+
+    # ---------------------------------------------------------
+    # 1. Features de Razão (Ratios) & Capacidade
+    # ---------------------------------------------------------
+    # DTI (Debt-to-Income) Proxy: Quanto da renda o boleto compromete
+    df_feat['DTI_FATURAMENTO'] = df_feat['VALOR_A_PAGAR'] / df_feat['RENDA_MES_ANTERIOR']
+
+    # Ticket Médio por Funcionário: Proxy de porte e robustez
+    df_feat['TICKET_POR_FUNC'] = df_feat['VALOR_A_PAGAR'] / df_feat['NO_FUNCIONARIOS']
+
+    # ---------------------------------------------------------
+    # 2. Features de Volatilidade (Behavior)
+    # ---------------------------------------------------------
+    # Média móvel dos últimos 3 meses (SHIFT(1) é crucial para não ver o atual)
+    df_feat['MEDIA_VALOR_3M'] = df_feat.groupby('ID_CLIENTE')['VALOR_A_PAGAR'].transform(
+        lambda x: x.shift(1).rolling(window=3).mean()
+    )
+
+    # Payment Shock: O quanto o valor atual foge da média recente do cliente
+    df_feat['PAYMENT_SHOCK'] = df_feat['VALOR_A_PAGAR'] / df_feat['MEDIA_VALOR_3M']
+
+    # Limpeza de infinitos e nulos gerados pelas divisões
+    cols_to_clean = ['DTI_FATURAMENTO', 'TICKET_POR_FUNC', 'PAYMENT_SHOCK', 'MEDIA_VALOR_3M']
+    df_feat[cols_to_clean] = df_feat[cols_to_clean].replace([np.inf, -np.inf], np.nan)
+    df_feat[cols_to_clean] = df_feat[cols_to_clean].fillna(0)
+
+    # ---------------------------------------------------------
+    # 3. Histórico de Inadimplência (Correção de Leakage)
+    # ---------------------------------------------------------
+    # Passo A: Criar tabela agregada por Safra (uma linha por Cliente/Mês)
+    # Isso garante que o shift pule meses inteiros, e não boletos dentro do mesmo mês
+    hist_safra = df_feat.groupby(['ID_CLIENTE', 'SAFRA_REF'])['TARGET'].max().reset_index()
+    hist_safra = hist_safra.sort_values(['ID_CLIENTE', 'SAFRA_REF'])
+
+    # Passo B: Calcular Lags na tabela agregada
+    # group_keys=False impede a criação de MultiIndex, evitando o erro de TypeError/KeyError
+    hist_safra['HIST_INAD_ANTERIOR'] = hist_safra.groupby('ID_CLIENTE', group_keys=False)['TARGET'] \
+                                                 .apply(lambda x: x.shift(1).cumsum())
+
+    hist_safra['HIST_FREQ_3M'] = hist_safra.groupby('ID_CLIENTE', group_keys=False)['TARGET'] \
+                                           .apply(lambda x: x.shift(1).rolling(3).mean())
+
+    # Passo C: Cruzar de volta com a base original (Broadcast)
+    hist_safra = hist_safra.drop(columns=['TARGET']) # Remove target para não duplicar
+    df_feat = df_feat.merge(hist_safra, on=['ID_CLIENTE', 'SAFRA_REF'], how='left')
+
+    # Preencher nulos resultantes do shift (primeira safra não tem histórico)
+    df_feat[['HIST_INAD_ANTERIOR', 'HIST_FREQ_3M']] = df_feat[['HIST_INAD_ANTERIOR', 'HIST_FREQ_3M']].fillna(0)
+
+    # Feature simples de contagem de relacionamento
+    df_feat['N_COBRANCAS'] = df_feat.groupby('ID_CLIENTE').cumcount()
+
+    return df_feat
