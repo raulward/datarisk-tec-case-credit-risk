@@ -90,7 +90,6 @@ def read_and_clean_data(dev_path: str, file_type: str) -> pd.DataFrame:
 
     return final_df
 
-
 def ks_statistic(y_true, y_score):
     scores_bad = y_score[y_true == 1]
     scores_good = y_score[y_true == 0]
@@ -103,11 +102,9 @@ def ks_statistic(y_true, y_score):
     ks = np.max(np.abs(cdf_bad - cdf_good))
     return ks
 
-
 def gini_coefficient(y_true, y_score):
     auc = roc_auc_score(y_true, y_score)
     return 2 * auc - 1
-
 
 def evaluate_global_metrics(y_true, y_score):
     auc = roc_auc_score(y_true, y_score)
@@ -133,3 +130,32 @@ def get_logreg_importance(pipeline, feature_names):
     imp['abs_coef'] = imp['coef'].abs()
     imp = imp.sort_values('abs_coef', ascending=False)
     return imp
+
+def recencia_inad_serie(s: pd.Series) -> pd.Series:
+    rec = []
+    last_bad = None
+    shifted = s.shift(1)
+
+    for i, v in enumerate(shifted):
+        if last_bad is None:
+            rec.append(np.nan)
+        else:
+            rec.append(i - last_bad)
+        if v == 1:
+            last_bad = i
+
+    return pd.Series(rec, index=s.index)
+
+def plot_roc_curve(y_true, y_score, title='Curva ROC'):
+    fpr, tpr, _ = roc_curve(y_true, y_score)
+    auc = roc_auc_score(y_true, y_score)
+
+    plt.figure(figsize=(7, 5))
+    plt.plot(fpr, tpr, label=f'AUC = {auc:.4f}')
+    plt.plot([0, 1], [0, 1], linestyle='--', color='gray', label='Aleatório')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.show()
