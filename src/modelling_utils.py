@@ -1,18 +1,9 @@
-# Data manipulation and visualization.
 import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-# Modeling.
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.metrics import roc_auc_score, roc_curve, brier_score_loss
-import statsmodels.api as sm
-
-import sys
-import os
-import pickle
+from sklearn.metrics import roc_auc_score, roc_curve, brier_score_loss, average_precision_score, precision_recall_curve
 
 from warnings import filterwarnings
 filterwarnings('ignore')
@@ -160,9 +151,9 @@ def plot_roc_curve(y_true, y_score, title='Curva ROC'):
     plt.grid(True)
     plt.show()
 
-def create_advanced_features(df):
+def feature_engineering(df):
     """
-    Cria features avançadas de crédito, incluindo razões financeiras,
+    Cria features de crédito, incluindo razões financeiras,
     volatilidade e histórico de inadimplência agregado por safra
     (evitando data leakage intra-mês).
 
@@ -172,62 +163,168 @@ def create_advanced_features(df):
     Returns:
         pd.DataFrame: DataFrame enriquecido com novas features.
     """
-    # Trabalha em uma cópia para não alterar o original inadvertidamente
+
     df_feat = df.copy()
 
-    # Garante a ordenação correta para cálculos de janela (rolling/shift)
     if 'ID_CLIENTE' in df_feat.columns and 'SAFRA_REF' in df_feat.columns:
         df_feat = df_feat.sort_values(['ID_CLIENTE', 'SAFRA_REF'])
 
-    # ---------------------------------------------------------
-    # 1. Features de Razão (Ratios) & Capacidade
-    # ---------------------------------------------------------
-    # DTI (Debt-to-Income) Proxy: Quanto da renda o boleto compromete
     df_feat['DTI_FATURAMENTO'] = df_feat['VALOR_A_PAGAR'] / df_feat['RENDA_MES_ANTERIOR']
 
-    # Ticket Médio por Funcionário: Proxy de porte e robustez
     df_feat['TICKET_POR_FUNC'] = df_feat['VALOR_A_PAGAR'] / df_feat['NO_FUNCIONARIOS']
 
-    # ---------------------------------------------------------
-    # 2. Features de Volatilidade (Behavior)
-    # ---------------------------------------------------------
-    # Média móvel dos últimos 3 meses (SHIFT(1) é crucial para não ver o atual)
     df_feat['MEDIA_VALOR_3M'] = df_feat.groupby('ID_CLIENTE')['VALOR_A_PAGAR'].transform(
         lambda x: x.shift(1).rolling(window=3).mean()
     )
 
-    # Payment Shock: O quanto o valor atual foge da média recente do cliente
     df_feat['PAYMENT_SHOCK'] = df_feat['VALOR_A_PAGAR'] / df_feat['MEDIA_VALOR_3M']
 
-    # Limpeza de infinitos e nulos gerados pelas divisões
     cols_to_clean = ['DTI_FATURAMENTO', 'TICKET_POR_FUNC', 'PAYMENT_SHOCK', 'MEDIA_VALOR_3M']
     df_feat[cols_to_clean] = df_feat[cols_to_clean].replace([np.inf, -np.inf], np.nan)
     df_feat[cols_to_clean] = df_feat[cols_to_clean].fillna(0)
 
-    # ---------------------------------------------------------
-    # 3. Histórico de Inadimplência (Correção de Leakage)
-    # ---------------------------------------------------------
-    # Passo A: Criar tabela agregada por Safra (uma linha por Cliente/Mês)
-    # Isso garante que o shift pule meses inteiros, e não boletos dentro do mesmo mês
     hist_safra = df_feat.groupby(['ID_CLIENTE', 'SAFRA_REF'])['TARGET'].max().reset_index()
     hist_safra = hist_safra.sort_values(['ID_CLIENTE', 'SAFRA_REF'])
 
-    # Passo B: Calcular Lags na tabela agregada
-    # group_keys=False impede a criação de MultiIndex, evitando o erro de TypeError/KeyError
     hist_safra['HIST_INAD_ANTERIOR'] = hist_safra.groupby('ID_CLIENTE', group_keys=False)['TARGET'] \
                                                  .apply(lambda x: x.shift(1).cumsum())
 
     hist_safra['HIST_FREQ_3M'] = hist_safra.groupby('ID_CLIENTE', group_keys=False)['TARGET'] \
                                            .apply(lambda x: x.shift(1).rolling(3).mean())
 
-    # Passo C: Cruzar de volta com a base original (Broadcast)
-    hist_safra = hist_safra.drop(columns=['TARGET']) # Remove target para não duplicar
+    hist_safra = hist_safra.drop(columns=['TARGET'])
     df_feat = df_feat.merge(hist_safra, on=['ID_CLIENTE', 'SAFRA_REF'], how='left')
 
-    # Preencher nulos resultantes do shift (primeira safra não tem histórico)
     df_feat[['HIST_INAD_ANTERIOR', 'HIST_FREQ_3M']] = df_feat[['HIST_INAD_ANTERIOR', 'HIST_FREQ_3M']].fillna(0)
 
-    # Feature simples de contagem de relacionamento
     df_feat['N_COBRANCAS'] = df_feat.groupby('ID_CLIENTE').cumcount()
 
     return df_feat
+
+def compare_model_variants(experiments,
+                           plot_roc=True,
+                           plot_pr=True,
+                           plot_bar=True,
+                           title_roc="Curvas ROC - Comparação de Modelos"):
+    """
+    Compara variantes de modelos que usam CONJUNTOS DE DADOS DIFERENTES.
+
+    Parameters
+    ----------
+    experiments : dict
+        Dicionário no formato:
+        {
+            "nome_legenda": {
+                "model": estimador_ou_pipeline,
+                "X_train": X_train,
+                "y_train": y_train,
+                "X_valid": X_valid,
+                "y_valid": y_valid,
+            },
+            ...
+        }
+    plot_roc, plot_pr, plot_bar : bool
+        Se True, plota ROC, Precision-Recall e barras de métricas.
+    title_roc : str
+        Título do gráfico ROC.
+
+    Returns
+    -------
+    results_df : DataFrame
+        Tabela com as métricas de cada variante.
+    y_scores_dict : dict
+        Dicionário {nome_legenda: y_score_no_valid}.
+    """
+
+    results = []
+    y_scores_dict = {}
+
+    for name, cfg in experiments.items():
+        model = cfg["model"]
+        X_train = cfg["X_train"]
+        y_train = cfg["y_train"]
+        X_valid = cfg["X_valid"]
+        y_valid = pd.Series(cfg["y_valid"]).astype(int)
+
+        # treina no dataset específico da variante
+        model.fit(X_train, y_train)
+
+        # probas
+        if hasattr(model, "predict_proba"):
+            y_score = model.predict_proba(X_valid)[:, 1]
+        else:
+            y_score = model.decision_function(X_valid)
+
+        y_scores_dict[name] = (y_valid, y_score)
+
+        roc_auc = roc_auc_score(y_valid, y_score)
+        avg_prec = average_precision_score(y_valid, y_score)
+        brier = brier_score_loss(y_valid, y_score)
+
+        results.append({
+            "modelo": name,
+            "ROC_AUC": roc_auc,
+            "GINI": 2 * roc_auc - 1,
+            "Average Precision": avg_prec,
+            "Brier Score": brier,
+        })
+
+    results_df = pd.DataFrame(results).sort_values("ROC_AUC", ascending=False)
+
+    # ----------------- ROC -----------------
+    if plot_roc:
+        plt.figure(figsize=(10, 6))
+        for name, (y_valid, y_score) in y_scores_dict.items():
+            fpr, tpr, _ = roc_curve(y_valid, y_score)
+            auc_val = roc_auc_score(y_valid, y_score)
+            plt.plot(fpr, tpr, label=f"{name} (AUC = {auc_val:.3f})")
+
+        plt.plot([0, 1], [0, 1], linestyle="--", label="Aleatório")
+        plt.xlabel("Falso Positivo (FPR)")
+        plt.ylabel("Verdadeiro Positivo (TPR)")
+        plt.title(title_roc)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    # ------------- Precision–Recall ---------
+    if plot_pr:
+        plt.figure(figsize=(10, 6))
+        for name, (y_valid, y_score) in y_scores_dict.items():
+            precision, recall, _ = precision_recall_curve(y_valid, y_score)
+            ap = average_precision_score(y_valid, y_score)
+            plt.plot(recall, precision, label=f"{name} (AP = {ap:.3f})")
+
+        plt.xlabel("Recall")
+        plt.ylabel("Precisão")
+        plt.title("Curvas Precision-Recall - Comparação de Modelos")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    # ------------- Barras de métricas -------
+    if plot_bar:
+        plt.figure(figsize=(8, 5))
+        metrics_plot = results_df.melt(
+            id_vars="modelo",
+            value_vars=["ROC_AUC", "GINI", "Brier Score"],
+            var_name="métrica",
+            value_name="valor"
+        )
+        ax = sns.barplot(data=metrics_plot, x="métrica", y="valor", hue="modelo")
+        for p in ax.patches:
+            height = p.get_height()
+            ax.annotate(
+                f"{height:.3f}",
+                (p.get_x() + p.get_width() / 2., height),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                xytext=(0, 3),
+                textcoords="offset points"
+            )
+        plt.title("Comparação de Métricas por Variante")
+        plt.tight_layout()
+        plt.show()
+
+    return results_df, y_scores_dict

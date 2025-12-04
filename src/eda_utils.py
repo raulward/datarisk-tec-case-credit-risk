@@ -56,7 +56,7 @@ class DataUtils:
                 Default = "csv".
             info (bool, opcional):
                 Informações a respeito dos dados como:
-                    - .info() 
+                    - .info()
                     - Contagem de valores únicos e valores únicos
                     - Quantidade de registros e variáveis
                     - Quantidade de registros nulos
@@ -89,7 +89,7 @@ class DataUtils:
                 f"Tipo de arquivo não suportado: {file_type}. "
                 "Use 'csv' ou 'xlsx'."
             )
-        
+
         if info:
             print('-' * 100)
             print()
@@ -516,7 +516,7 @@ class DataUtils:
         - média, mínimo e máximo da PORCENTAGEM de NAs por ID.
 
         Args:
-            id_cols (List[str]): lista com o(s) nome(s) da(s) coluna(s) de ID 
+            id_cols (List[str]): lista com o(s) nome(s) da(s) coluna(s) de ID
                                  (ex.: ['ID_CLIENTE']).
             data (pd.DataFrame): base de dados.
             features (List[str]): lista de colunas numéricas para analisar NAs.
