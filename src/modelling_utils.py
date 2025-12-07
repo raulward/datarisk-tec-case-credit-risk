@@ -10,15 +10,18 @@ filterwarnings('ignore')
 
 
 def read_and_clean_data(dev_path: str, file_type: str) -> pd.DataFrame:
-    base_info_path = '../data/processed/base_info.xlsx'
-    base_cad_path = '../data/processed/base_cadastral.xlsx'
+    """
+    Le e limpa base
+    """
+    base_info_path = '../data/processed/base_info.parquet'
+    base_cad_path = '../data/processed/base_cadastral.parquet'
 
     if file_type == 'csv':
         dev_df = pd.read_csv(dev_path)
-    elif file_type == 'xlsx':
-        dev_df = pd.read_excel(dev_path)
+    elif file_type == 'parquet':
+        dev_df = pd.read_parquet(dev_path)
     else:
-        raise ValueError("file_type must be 'csv' or 'xlsx'")
+        raise ValueError("file_type must be 'csv' or 'parquet'")
 
     dev_df['SAFRA_REF'] = pd.to_datetime(dev_df['SAFRA_REF'])
     dev_df['DATA_PAGAMENTO'] = pd.to_datetime(dev_df['DATA_PAGAMENTO'])
@@ -26,8 +29,8 @@ def read_and_clean_data(dev_path: str, file_type: str) -> pd.DataFrame:
 
     dev_df.sort_values('SAFRA_REF', inplace=True)
 
-    bc_df = pd.read_excel(base_cad_path)
-    bi_df = pd.read_excel(base_info_path)
+    bc_df = pd.read_parquet(base_cad_path)
+    bi_df = pd.read_parquet(base_info_path)
 
     dev_df['DIAS_ATRASO'] = (dev_df['DATA_PAGAMENTO'] - dev_df['DATA_VENCIMENTO']).dt.days
     dev_df['TARGET'] = np.where(dev_df['DIAS_ATRASO'] >= 5, 1, 0)
@@ -82,6 +85,9 @@ def read_and_clean_data(dev_path: str, file_type: str) -> pd.DataFrame:
     return final_df
 
 def ks_statistic(y_true, y_score):
+    """
+    Calcula KS
+    """
     scores_bad = y_score[y_true == 1]
     scores_good = y_score[y_true == 0]
 
@@ -94,10 +100,16 @@ def ks_statistic(y_true, y_score):
     return ks
 
 def gini_coefficient(y_true, y_score):
+    """
+    Calcula o GINI
+    """
     auc = roc_auc_score(y_true, y_score)
     return 2 * auc - 1
 
 def evaluate_global_metrics(y_true, y_score):
+    """
+    Avalia as principais métricas de desempenho
+    """
     auc = roc_auc_score(y_true, y_score)
     ks = ks_statistic(y_true, y_score)
     gini = gini_coefficient(y_true, y_score)
@@ -111,6 +123,9 @@ def evaluate_global_metrics(y_true, y_score):
     }
 
 def get_logreg_importance(pipeline, feature_names):
+    """
+    Retorna a importancia de cada feature para a regressão linear
+    """
     clf = pipeline.named_steps['clf']
     coef = clf.coef_[0]
 
@@ -123,6 +138,9 @@ def get_logreg_importance(pipeline, feature_names):
     return imp
 
 def recencia_inad_serie(s: pd.Series) -> pd.Series:
+    """
+    Feature para calcular a recencia de inadimplencia
+    """
     rec = []
     last_bad = None
     shifted = s.shift(1)
@@ -138,6 +156,9 @@ def recencia_inad_serie(s: pd.Series) -> pd.Series:
     return pd.Series(rec, index=s.index)
 
 def plot_roc_curve(y_true, y_score, title='Curva ROC'):
+    """
+    Plota curva ROC
+    """
     fpr, tpr, _ = roc_curve(y_true, y_score)
     auc = roc_auc_score(y_true, y_score)
 
@@ -156,12 +177,6 @@ def feature_engineering(df):
     Cria features de crédito, incluindo razões financeiras,
     volatilidade e histórico de inadimplência agregado por safra
     (evitando data leakage intra-mês).
-
-    Args:
-        df (pd.DataFrame): DataFrame contendo as colunas originais.
-
-    Returns:
-        pd.DataFrame: DataFrame enriquecido com novas features.
     """
 
     df_feat = df.copy()
@@ -208,32 +223,6 @@ def compare_model_variants(experiments,
                            title_roc="Curvas ROC - Comparação de Modelos"):
     """
     Compara variantes de modelos que usam CONJUNTOS DE DADOS DIFERENTES.
-
-    Parameters
-    ----------
-    experiments : dict
-        Dicionário no formato:
-        {
-            "nome_legenda": {
-                "model": estimador_ou_pipeline,
-                "X_train": X_train,
-                "y_train": y_train,
-                "X_valid": X_valid,
-                "y_valid": y_valid,
-            },
-            ...
-        }
-    plot_roc, plot_pr, plot_bar : bool
-        Se True, plota ROC, Precision-Recall e barras de métricas.
-    title_roc : str
-        Título do gráfico ROC.
-
-    Returns
-    -------
-    results_df : DataFrame
-        Tabela com as métricas de cada variante.
-    y_scores_dict : dict
-        Dicionário {nome_legenda: y_score_no_valid}.
     """
 
     results = []

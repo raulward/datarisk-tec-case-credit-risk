@@ -1,30 +1,17 @@
+# src/eda_utils.py
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import List
+from typing import List, Union
+
+PathLike = Union[str, Path]
 
 
-class DataUtils:
-    """
-    Classe utilitária para operações simples e recorrentes com dados.
 
-    Atualmente fornece métodos para:
-
-    - leitura de arquivos em formato CSV ou Excel (`.xlsx`);
-    - centralização do caminho base de dados do projeto;
-    - visualização univariada.
-
-    A ideia é encapsular funções de uso geral relacionadas a dados
-    em um único lugar, facilitando reutilização e manutenção.
-    """
-
-    def __init__(self) -> None:
-        pass
-
-    @staticmethod
-    def read_data(
+def read_data(
         file: str,
         sep: str = ";",
         base_path: str = "../data",
@@ -40,72 +27,37 @@ class DataUtils:
         do arquivo e, opcionalmente, o tipo e o separador. Além disso,
         pode retornar informações a respeito do arquivo lido.
 
-        Args:
-            file (str):
-                Nome do arquivo a ser lido. Ex.: "base_cadastral.csv".
-            sep (str, opcional):
-                Separador de colunas a ser utilizado na leitura de CSVs.
-                Default = ';'.
-            base_path (str, opcional):
-                Caminho base onde os arquivos estão armazenados.
-                Pode ser relativo ou absoluto. Default = "../data".
-            file_type (str, opcional):
-                Tipo do arquivo. Aceita:
-                    - "csv"  → usa `pd.read_csv`
-                    - "xlsx" → usa `pd.read_excel`
-                Default = "csv".
-            info (bool, opcional):
-                Informações a respeito dos dados como:
-                    - .info()
-                    - Contagem de valores únicos e valores únicos
-                    - Quantidade de registros e variáveis
-                    - Quantidade de registros nulos
-
-        Returns:
-            pd.DataFrame:
-                DataFrame contendo os dados lidos do arquivo.
-
-        Raises:
-            FileNotFoundError:
-                Se o arquivo não for encontrado no caminho informado.
-            ValueError:
-                Se o `file_type` não for um dos tipos suportados.
         """
+
         base_path = Path(base_path)
-        medium_path = 'processed' if processed else 'unprocessed'
-        final_path = base_path / medium_path / file
 
-        print(final_path)
+        subfolder = "processed" if processed else "unprocessed"
 
-        if not final_path.exists():
-            raise FileNotFoundError(f"Arquivo não encontrado: {final_path}")
+        full_path = base_path / subfolder / file
+
+        if not full_path.exists():
+            raise FileNotFoundError(f"Arquivo não encontrado em: {full_path}")
 
         if file_type == "csv":
-            df = pd.read_csv(final_path, sep=sep)
-        elif file_type == "xlsx":
-            df = pd.read_excel(final_path)
+            df = pd.read_csv(full_path, sep=sep)
+        elif file_type == "parquet":
+            df = pd.read_parquet(full_path)
         else:
-            raise ValueError(
-                f"Tipo de arquivo não suportado: {file_type}. "
-                "Use 'csv' ou 'xlsx'."
-            )
+            raise ValueError("file_type deve ser 'csv' ou 'parquet'")
 
         if info:
-            print('-' * 100)
             print()
-            print('Shape')
+            print("=" * 100)
+            print(f"Arquivo lido: {full_path}")
+            print("=" * 100)
             print()
-            print(f'linhas: {df.shape[0]} | colunas: {df.shape[1]}')
-            print()
-            print('-' * 100)
-            print()
-            print('INFO')
+            print("Info()")
             print()
             print(df.info())
             print()
-            print('-' * 100)
+            print("-" * 100)
             print()
-            print('Valores únicos')
+            print("Valores únicos")
             print()
             for col in df.columns:
                 print(f"\nColuna: {col}")
@@ -113,22 +65,20 @@ class DataUtils:
                 if col != "ID_CLIENTE":
                     print(df[col].unique())
             print()
-            print('-' * 100)
+            print("-" * 100)
             print()
-            print('Registros faltantes')
+            print("Registros faltantes")
             print()
             df_missings = df.isna().sum().reset_index().rename(columns={'index': 'coluna', 0: 'Missings no.'}).sort_values('Missings no.')
             df_missings['Missing (%)'] = np.round((df_missings['Missings no.'] / df.shape[0]) * 100, 2)
             print(df_missings)
             print()
-            print('-' * 100)
-
+            print("-" * 100)
 
 
         return df
 
-    @staticmethod
-    def univariate_analysis_plots(
+def univariate_analysis_plots(
         data: pd.DataFrame,
         features: list,
         palette: str,
@@ -144,51 +94,6 @@ class DataUtils:
     ) -> None:
         """
         Gera gráficos para análise univariada de um conjunto de variáveis.
-
-        A função adapta o tipo de visualização de acordo com o tipo da variável:
-
-        - Variáveis numéricas:
-            - Histograma (com porcentagem no eixo Y, opcionalmente com KDE)
-            - Boxplot ao lado do histograma
-            - Clipping automático de outliers por quantil, para evitar distorções visuais.
-
-        - Variáveis categóricas:
-            - Gráfico de barras horizontais mostrando a proporção de cada categoria;
-            - Opcionalmente, gráfico de média de outra variável (`mean`) por categoria.
-
-        Args:
-            data (pd.DataFrame):
-                DataFrame contendo os dados.
-            features (list):
-                Lista com os nomes das variáveis a serem visualizadas.
-            histplot (bool, opcional):
-                Se True, gera histogramas para variáveis numéricas. Default = True.
-            barplot (bool, opcional):
-                Se True, gera gráficos de barras horizontais para variáveis categóricas.
-                Default = False.
-            mean (str ou None, opcional):
-                Se fornecido, o gráfico de barras categórico mostra a MÉDIA
-                dessa variável ao invés da proporção. Default = None.
-            text_y (float, opcional):
-                Posição horizontal do texto sobre as barras nos gráficos categóricos.
-                Default = 0.5.
-            kde (bool, opcional):
-                Se True, plota a curva KDE sobre os histogramas numéricos.
-                Default = False.
-            color (str, opcional):
-                Cor principal dos gráficos. Default = "#8d0801".
-            figsize (tuple, opcional):
-                Tamanho total da figura (largura, altura). Default = (24, 12).
-            clip_outliers (bool, opcional):
-                Se True, realiza clipping de outliers em variáveis numéricas usando quantis.
-                Default = True.
-            lower_quantile (float, opcional):
-                Quantil inferior para clipping (se clip_outliers=True). Default = 0.01.
-            upper_quantile (float, opcional):
-                Quantil superior para clipping (se clip_outliers=True). Default = 0.99.
-
-        Returns:
-            None
         """
 
         num_features = len(features)
@@ -335,8 +240,7 @@ class DataUtils:
         plt.tight_layout()
         plt.show()
 
-    @staticmethod
-    def woe_iv_table(
+def woe_iv_table(
         data: pd.DataFrame,
         feature: str,
         target: str,
@@ -346,23 +250,6 @@ class DataUtils:
     ) -> pd.DataFrame:
         """
         Gera tabela de análise de default para uma variável (WoE / IV).
-
-        Args:
-            data (pd.DataFrame): DataFrame com os dados.
-            feature (str): Nome da variável explicativa a ser analisada.
-            target (str): Nome da variável resposta binária (good/bad).
-            bad_value (int | str, opcional): Valor que representa "mau pagador" no target.
-                                             Tudo diferente disso será considerado "bom".
-                                             Default = 1.
-            bins (int | None, opcional): Se fornecido e a variável for numérica, será
-                                         aplicado um qcut em `bins` faixas antes da análise.
-                                         Default = None (usa categorias já existentes).
-            precision (int, opcional): Casas decimais para arredondar percentuais/WoE/IV.
-                                       Default = 2.
-
-        Returns:
-            pd.DataFrame: Tabela com n_obs, proporções, WoE e IV por categoria
-                          e uma linha "total" com o IV total da variável.
         """
 
         df = data[[feature, target]].dropna().copy()
@@ -449,8 +336,7 @@ class DataUtils:
 
         return table
 
-    @staticmethod
-    def plot_default_woe(
+def plot_default_woe(
         data: pd.DataFrame,
         feature: str,
         target: str,
@@ -459,7 +345,7 @@ class DataUtils:
         bins: int | None = None,
         figsize: tuple = (14, 4),
     ) -> None:
-        tbl = DataUtils.woe_iv_table(
+        tbl = woe_iv_table(
             data=data,
             feature=feature,
             target=target,
@@ -495,8 +381,10 @@ class DataUtils:
         plt.tight_layout()
         plt.show()
 
-    @staticmethod
-    def detect_outliers_iqr(series):
+def detect_outliers_iqr(series):
+        """
+        Retorna uma Series booleana marcando outliers usando IQR.
+        """
         Q1 = series.quantile(0.25)
         Q3 = series.quantile(0.75)
         IQR = Q3 - Q1
@@ -504,51 +392,44 @@ class DataUtils:
         upper = Q3 + 1.5 * IQR
         return series[(series < lower) | (series > upper)]
 
-    @staticmethod
-    def find_na_ocurrences_by_ids(
-        id_cols: List[str],
-        data: pd.DataFrame,
-        features: List[str]
-    ) -> pd.DataFrame:
-        """
-        Calcula, para cada feature em `features`:
-        - média, mínimo e máximo da QUANTIDADE de NAs por ID (ou combinação de IDs);
-        - média, mínimo e máximo da PORCENTAGEM de NAs por ID.
+def find_na_ocurrences_by_ids(
+    id_series: pd.Series,
+    df: pd.DataFrame,
+    features: List[str],
+) -> pd.DataFrame:
+    """
+    Analisa a ocorrência de valores faltantes por ID para um conjunto de variáveis.
+    """
 
-        Args:
-            id_cols (List[str]): lista com o(s) nome(s) da(s) coluna(s) de ID
-                                 (ex.: ['ID_CLIENTE']).
-            data (pd.DataFrame): base de dados.
-            features (List[str]): lista de colunas numéricas para analisar NAs.
+    if not isinstance(features, list):
+        raise ValueError("features deve ser uma lista de nomes de colunas.")
 
-        Returns:
-            pd.DataFrame: tabela com métricas de NAs por feature.
-        """
+    if len(id_series) != len(df):
+        raise ValueError("id_series e df devem ter o mesmo comprimento.")
 
-        results = []
+    results = []
 
-        for feature in features:
-            # agrupa por ID(s)
-            grp = data.groupby(id_cols)[feature]
+    for feature in features:
+        if feature not in df.columns:
+            raise ValueError(f"A coluna '{feature}' não está presente no DataFrame.")
 
-            # quantidade de NAs por ID
-            na_count = grp.apply(lambda s: s.isna().sum())
+        # contagem de missings por ID
+        na_count = df[feature].isna().groupby(id_series).sum()
 
-            # total de registros por ID
-            total_count = grp.size()
+        # total de registros por ID (missing + não missing)
+        total_count = df[feature].groupby(id_series).size()
 
-            # porcentagem de NAs por ID
-            na_pct = na_count / total_count
+        # proporção de missing por ID
+        na_pct = na_count / total_count
 
-            # monta dicionário de métricas
-            results.append({
-                "feature": feature,
-                "mean_na_count": na_count.mean(),
-                "max_na_count": na_count.max(),
-                "min_na_count": na_count.min(),
-                "mean_na_pct": na_pct.mean(),
-                "max_na_pct": na_pct.max(),
-                "min_na_pct": na_pct.min(),
-            })
+        results.append({
+            "feature": feature,
+            "mean_na_count": na_count.mean(),
+            "max_na_count": na_count.max(),
+            "min_na_count": na_count.min(),
+            "mean_na_pct": na_pct.mean(),
+            "max_na_pct": na_pct.max(),
+            "min_na_pct": na_pct.min(),
+        })
 
-        return pd.DataFrame(results)
+    return pd.DataFrame(results)
